@@ -1,0 +1,5 @@
+discord
+discord-ext-voice_recv
+mlx-whisper
+mlx-lm
+python-dotenv
