@@ -23,38 +23,46 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 model, tokenizer = load("lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit")
 
-class RecordingSink(voice_recv.FFmpegSink):
+class RecordingSink:
     def __init__(self, guild_id, bot_id):
         self.guild_id = guild_id
         self.bot_id = bot_id
         self.is_recording = False
+        self.filepath = None
+        self.ffmpeg_sink = None
         
     def wants_opus(self):
+        return False
+        
+    def wants_pcm(self):
         return True
         
     def write(self, user, data):
         """Called when audio data is received"""
-        if not self.is_recording:
+        if not self.is_recording or not self.ffmpeg_sink:
             return
             
         if user and user.id == self.bot_id:
             return
             
-        # Pass data to parent FFmpegSink
-        super().write(user, data)
+        # Pass data to FFmpegSink
+        self.ffmpeg_sink.write(user, data)
         
     def start_recording(self):
         self.is_recording = True
+        
+        # Generate timestamp when recording starts
         timestamp = int(time.time())
         filename = f"recording_{self.guild_id}_{timestamp}.ogg"
         filepath = os.path.join("recordings", filename)
         
         os.makedirs("recordings", exist_ok=True)
         
-        super().__init__(
+        # Create FFmpegSink with the file path
+        self.ffmpeg_sink = voice_recv.FFmpegSink(
             filename=filepath,
-            before_options='-f opus -ar 48000 -ac 2',
-            options='-c:a copy'  # Copy opus without re-encoding
+            before_options='-f opus -ar 48000 -ac 2 -c:a opus',
+            options='-c:a copy'
         )
         
         self.filepath = filepath
@@ -62,7 +70,9 @@ class RecordingSink(voice_recv.FFmpegSink):
         
     def stop_recording(self):
         self.is_recording = False
-        # FFmpegSink will close the file automatically when done
+        # Call cleanup to ensure FFmpeg finishes writing
+        if self.ffmpeg_sink:
+            self.ffmpeg_sink.cleanup()
         
     def get_filepath(self):
         return self.filepath
