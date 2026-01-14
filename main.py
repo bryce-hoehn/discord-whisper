@@ -23,14 +23,11 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 model, tokenizer = load("lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit")
 
-class RecordingSink(voice_recv.AudioSink):
+class RecordingSink(voice_recv.FFmpegSink):
     def __init__(self, guild_id, bot_id):
         self.guild_id = guild_id
         self.bot_id = bot_id
-        self.opus_data = []
         self.is_recording = False
-        self.opus_file = None
-        self.opus_filepath = None
         
     def wants_opus(self):
         return True
@@ -42,52 +39,40 @@ class RecordingSink(voice_recv.AudioSink):
             
         if user and user.id == self.bot_id:
             return
-        
-        packet = None
-
-        if hasattr(data, 'data') and data.data:
-            packet = data.data
-        elif isinstance(data, bytes):
-            packet = data
-        elif hasattr(data, 'opus') and data.opus:
-            packet = data.opus
             
-        if packet and self.opus_file:
-            self.opus_file.write(packet)
-            self.opus_data.append(packet)
-        
-    def cleanup(self):
-        if self.opus_file:
-            self.opus_file.close()
-            self.opus_file = None
+        # Pass data to parent FFmpegSink
+        super().write(user, data)
         
     def start_recording(self):
-        self.opus_data = []
         self.is_recording = True
         
+        self.filepath = None
+        
+        # Call parent constructor with output format
         timestamp = int(time.time())
-        filename = f"recording_{self.guild_id}_{timestamp}.opus"
+        filename = f"recording_{self.guild_id}_{timestamp}.ogg"
         filepath = os.path.join("recordings", filename)
         
         os.makedirs("recordings", exist_ok=True)
         
-        self.opus_file = open(filepath, 'wb')
-        self.opus_filepath = filepath
+        # FFmpegSink will handle the conversion to Ogg Opus
+        # Input is raw opus, output as ogg container
+        super().__init__(filename=filepath, before_options='-f opus -ar 48000 -ac 2')
         
-        print(f"Started recording Opus stream to {filepath}")
+        self.filepath = filepath
+
+        print(f"Started recording to {self.filepath}")
         
     def stop_recording(self):
         self.is_recording = False
-        if self.opus_file:
-            self.opus_file.close()
-            self.opus_file = None
-            
+        # FFmpegSink will close the file automatically when done
+        
     def get_filepath(self):
-        return self.opus_filepath
+        return self.filepath
         
     def save(self):
-        """Return the Opus file path (already saved during recording)"""
-        return self.opus_filepath
+        """Return the file path"""
+        return self.filepath
 
 recordings = {}
 
@@ -120,14 +105,14 @@ async def record(ctx):
             'start_time': time.time()
         }
         
-        await ctx.send(f"🎤 Started recording in {ctx.author.voice.channel.name} (saving as Opus)!")
+        await ctx.send(f"🎤 Started recording in {ctx.author.voice.channel.name}")
         
     except Exception as e:
         await ctx.send(f"Error: {str(e)}")
 
 @bot.command()
 async def stop(ctx):
-    """Stop recording, transcribe and summarize directly from Opus"""
+    """Stop recording, transcribe and summarize"""
     try:
         if ctx.guild.id not in recordings:
             await ctx.send("Not recording in this server!")
@@ -139,7 +124,7 @@ async def stop(ctx):
         
         sink.stop_recording()
         
-        opus_path = sink.get_filepath()
+        audio_path = sink.get_filepath()
         
         await vc.disconnect()
         
@@ -151,15 +136,15 @@ async def stop(ctx):
         # Clean up
         del recordings[ctx.guild.id]
         
-        if opus_path and os.path.exists(opus_path):
-            file_size = os.path.getsize(opus_path) / (1024 * 1024)  # MB
+        if audio_path and os.path.exists(audio_path):
+            file_size = os.path.getsize(audio_path) / (1024 * 1024)  # MB
             await ctx.send(f"🛑 Recording stopped! Duration: {minutes}m {seconds}s, Size: {file_size:.2f} MB")
             await ctx.send(f"Processing file...")
 
-            transcription = mlx_whisper.transcribe(opus_path, path_or_hf_repo="mlx-community/whisper-medium.en-mlx-4bit", word_timestamps=True)
+            transcription = mlx_whisper.transcribe(audio_path, path_or_hf_repo="mlx-community/whisper-medium.en-mlx-4bit", word_timestamps=True)
             
             # Save transcript
-            text_filepath = opus_path.replace('.opus', '.txt')
+            text_filepath = audio_path.replace('.ogg', '.txt')
             with open(text_filepath, "w") as f:
                 f.write(transcription['text'])
             
@@ -167,7 +152,7 @@ async def stop(ctx):
             prompt = '''
                 Summarize the meeting transcript in Discord markdown format with these sections:
                 - Project Updates
-                - Discussion Points  
+                - Discussion Points
                 - Action Items
                 - Next Sprint Assignments
                 
@@ -180,9 +165,9 @@ async def stop(ctx):
             prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
             
             response = generate(
-                model, 
-                tokenizer, 
-                prompt=prompt, 
+                model,
+                tokenizer,
+                prompt=prompt,
                 verbose=True,
                 max_tokens=8192,
             )
@@ -191,7 +176,7 @@ async def stop(ctx):
                 response = response.split('</think>', 1)[1].strip()
             
             # Save summary
-            summary_filepath = opus_path.replace('.opus', '.md')
+            summary_filepath = audio_path.replace('.ogg', '.md')
             with open(summary_filepath, "w") as f:
                 f.write(response)
             
@@ -200,7 +185,7 @@ async def stop(ctx):
                 discord.File(summary_filepath),
                 discord.File(text_filepath)
                 # commented out to avoid hitting file size limit
-                # discord.File(opus_path)
+                # discord.File(audio_path)
             ])
             
         else:
