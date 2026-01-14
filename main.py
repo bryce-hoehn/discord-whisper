@@ -45,22 +45,19 @@ class RecordingSink(voice_recv.FFmpegSink):
         
     def start_recording(self):
         self.is_recording = True
-        
-        self.filepath = None
-        
-        # Call parent constructor with output format
         timestamp = int(time.time())
         filename = f"recording_{self.guild_id}_{timestamp}.ogg"
         filepath = os.path.join("recordings", filename)
         
         os.makedirs("recordings", exist_ok=True)
         
-        # FFmpegSink will handle the conversion to Ogg Opus
-        # Input is raw opus, output as ogg container
-        super().__init__(filename=filepath, before_options='-f opus -ar 48000 -ac 2')
+        super().__init__(
+            filename=filepath,
+            before_options='-f opus -ar 48000 -ac 2',
+            options='-c:a copy'  # Copy opus without re-encoding
+        )
         
         self.filepath = filepath
-
         print(f"Started recording to {self.filepath}")
         
     def stop_recording(self):
