@@ -23,8 +23,9 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 model, tokenizer = load("lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit")
 
-class RecordingSink:
+class RecordingSink(voice_recv.AudioSink):
     def __init__(self, guild_id, bot_id):
+        super().__init__()
         self.guild_id = guild_id
         self.bot_id = bot_id
         self.is_recording = False
@@ -61,8 +62,8 @@ class RecordingSink:
         # Create FFmpegSink with the file path
         self.ffmpeg_sink = voice_recv.FFmpegSink(
             filename=filepath,
-            before_options='-f opus -ar 48000 -ac 2 -c:a opus',
-            options='-c:a copy'
+            before_options='-f s16le -ar 48000 -ac 2',
+            options='-c:a libopus'
         )
         
         self.filepath = filepath
@@ -80,6 +81,11 @@ class RecordingSink:
     def save(self):
         """Return the file path"""
         return self.filepath
+        
+    def cleanup(self):
+        """Clean up resources"""
+        if self.ffmpeg_sink:
+            self.ffmpeg_sink.cleanup()
 
 recordings = {}
 
@@ -181,6 +187,34 @@ async def stop(ctx):
             
             if '<think>' in response and '</think>' in response:
                 response = response.split('</think>', 1)[1].strip()
+            
+            # Remove markdown code block formatting if present
+            # Handles patterns like ```markdown ... ``` or ``` ... ```
+            response = response.strip()
+            if response.startswith('```'):
+                # Find the first newline after the opening ```
+                lines = response.split('\n')
+                # Remove the first line (the opening ```markdown or ```)
+                lines = lines[1:]
+                # Remove the last line if it's just ```
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]
+                
+                # Strip common leading whitespace if all lines have it
+                if lines:
+                    # Find minimum leading whitespace (excluding empty lines)
+                    min_leading = float('inf')
+                    for line in lines:
+                        if line.strip():  # Non-empty line
+                            leading = len(line) - len(line.lstrip())
+                            if leading < min_leading:
+                                min_leading = leading
+                    
+                    # Strip the common leading whitespace if found
+                    if min_leading != float('inf') and min_leading > 0:
+                        lines = [line[min_leading:] if len(line) >= min_leading else line for line in lines]
+                
+                response = '\n'.join(lines).strip()
             
             # Save summary
             summary_filepath = audio_path.replace('.ogg', '.md')
