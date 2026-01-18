@@ -152,11 +152,11 @@ async def stop(ctx):
             with open(summary_path, 'w') as f:
                 f.write(summary)
             
-            # Send summary in chunks
-            summary_lines = summary.split('\n')
-            for line in summary_lines:
-                if line.strip():
-                    await ctx.send(line)
+            # Send summary in chunks (split by empty lines/paragraphs)
+            paragraphs = summary.split('\n\n')
+            for paragraph in paragraphs:
+                if paragraph.strip():
+                    await ctx.send(paragraph.strip())
             
             # Send completion message
             await ctx.send(f"✅ Processing complete! Transcripts saved to:\n- Individual: `{base_path}_user_*.txt`\n- Combined: `{combined_transcript_path}`\n- Summary: `{summary_path}`")
