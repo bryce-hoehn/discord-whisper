@@ -3,6 +3,8 @@ import time
 import os
 import logging
 import mlx_whisper
+import threading
+import asyncio
 from mlx_lm import load, generate
 from discord.ext import commands, voice_recv
 from dotenv import load_dotenv
@@ -12,7 +14,6 @@ load_dotenv()
 logging.getLogger('discord.ext.voice_recv').setLevel(logging.WARNING)
 logging.getLogger('discord.voice_client').setLevel(logging.WARNING)
 
-# Ensure opus is loaded
 discord.opus._load_default()
 
 intents = discord.Intents.default()
@@ -23,71 +24,70 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 model, tokenizer = load("lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit")
 
-class RecordingSink(voice_recv.AudioSink):
-    def __init__(self, guild_id, bot_id):
-        super().__init__()
-        self.guild_id = guild_id
-        self.bot_id = bot_id
-        self.is_recording = False
-        self.filepath = None
-        self.ffmpeg_sink = None
-        
-    def wants_opus(self):
-        return False
-        
-    def wants_pcm(self):
-        return True
-        
-    def write(self, user, data):
-        """Called when audio data is received"""
-        if not self.is_recording or not self.ffmpeg_sink:
-            return
-            
-        if user and user.id == self.bot_id:
-            return
-            
-        # Pass data to FFmpegSink
-        self.ffmpeg_sink.write(user, data)
-        
-    def start_recording(self):
-        self.is_recording = True
-        
-        # Generate timestamp when recording starts
-        timestamp = int(time.time())
-        filename = f"recording_{self.guild_id}_{timestamp}.ogg"
-        filepath = os.path.join("recordings", filename)
-        
-        os.makedirs("recordings", exist_ok=True)
-        
-        # Create FFmpegSink with the file path
-        self.ffmpeg_sink = voice_recv.FFmpegSink(
-            filename=filepath,
-            before_options='-f s16le -ar 48000 -ac 2',
-            options='-c:a libopus'
-        )
-        
-        self.filepath = filepath
-        print(f"Started recording to {self.filepath}")
-        
-    def stop_recording(self):
-        self.is_recording = False
-        # Call cleanup to ensure FFmpeg finishes writing
-        if self.ffmpeg_sink:
-            self.ffmpeg_sink.cleanup()
-        
-    def get_filepath(self):
-        return self.filepath
-        
-    def save(self):
-        """Return the file path"""
-        return self.filepath
-        
-    def cleanup(self):
-        """Clean up resources"""
-        if self.ffmpeg_sink:
-            self.ffmpeg_sink.cleanup()
-
 recordings = {}
+
+def transcribe(ctx, audio_path):
+    transcription = mlx_whisper.transcribe(audio_path, path_or_hf_repo="mlx-community/whisper-tiny.en-mlx-q4")
+            
+    # Save transcript
+    text_filepath = audio_path.replace('.ogg', '.txt')
+    with open(text_filepath, "w") as f:
+        f.write(transcription['text'])
+    
+    # Generate summary
+    prompt = '''
+        Summarize the meeting transcript in Discord markdown format with these sections:
+        - Project Updates
+        - Discussion Points
+        - Action Items
+        - Next Sprint Assignments
+        
+        Be concise and focus on key points only.
+        
+        Transcript:
+        ''' + transcription['text']
+    
+    messages = [{"role": "user", "content": prompt}]
+    prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+    
+    response = generate(
+        model,
+        tokenizer,
+        prompt=prompt,
+        verbose=True,
+        max_tokens=8192,
+    )
+    
+    if '<think>' in response and '</think>' in response:
+        response = response.split('</think>', 1)[1].strip()
+    
+    # Remove markdown code block formatting if present
+    response = response.strip()
+    if response.startswith('```'):
+        lines = response.split('\n')
+        lines = lines[1:]
+        if lines and lines[-1].strip() == '```':
+            lines = lines[:-1]
+        
+        if lines:
+            min_leading = float('inf')
+            for line in lines:
+                if line.strip():
+                    leading = len(line) - len(line.lstrip())
+                    if leading < min_leading:
+                        min_leading = leading
+            
+            if min_leading != float('inf') and min_leading > 0:
+                lines = [line[min_leading:] if len(line) >= min_leading else line for line in lines]
+        
+        response = '\n'.join(lines).strip()
+    
+    summary_filepath = audio_path.replace('.ogg', '.md')
+
+    with open(summary_filepath, "w") as f:
+        f.write(response)
+    
+    return summary_filepath
 
 @bot.event
 async def on_ready():
@@ -96,6 +96,7 @@ async def on_ready():
 @bot.command()
 async def record(ctx):
     """Start recording audio from voice channel"""
+    timestamp = int(time.time())
     try:
         if not ctx.author.voice:
             await ctx.send("You need to be in a voice channel first!")
@@ -107,15 +108,23 @@ async def record(ctx):
             
         vc = await ctx.author.voice.channel.connect(cls=voice_recv.VoiceRecvClient)
         
-        sink = RecordingSink(ctx.guild.id, bot.user.id)
-        sink.start_recording()
+        # Create recordings directory if it doesn't exist
+        os.makedirs("recordings", exist_ok=True)
         
-        vc.listen(sink)
+        audio_path = f"recordings/{timestamp}.ogg"
+
+        sink = voice_recv.FFmpegSink(
+            filename=audio_path,
+            options="-acodec libopus -b:a 96k -vbr on"
+        )
+        
+        vc.start_listening(sink)
         
         recordings[ctx.guild.id] = {
             'voice_client': vc,
             'sink': sink,
-            'start_time': time.time()
+            'start_time': time.time(),
+            'audio_path': audio_path
         }
         
         await ctx.send(f"🎤 Started recording in {ctx.author.voice.channel.name}")
@@ -131,18 +140,19 @@ async def stop(ctx):
             await ctx.send("Not recording in this server!")
             return
             
+        # Get recording info
         recording_info = recordings[ctx.guild.id]
         vc = recording_info['voice_client']
-        sink = recording_info['sink']
+        start_time = recording_info['start_time']
+        audio_path = recording_info['audio_path']
         
-        sink.stop_recording()
-        
-        audio_path = sink.get_filepath()
-        
-        await vc.disconnect()
+        # Stop listening and disconnect
+        if vc:
+            vc.stop_listening()
+            await vc.disconnect()
         
         # Calculate duration
-        duration = time.time() - recording_info['start_time']
+        duration = time.time() - start_time
         minutes = int(duration // 60)
         seconds = int(duration % 60)
         
@@ -154,81 +164,12 @@ async def stop(ctx):
             await ctx.send(f"🛑 Recording stopped! Duration: {minutes}m {seconds}s, Size: {file_size:.2f} MB")
             await ctx.send(f"Processing file...")
 
-            transcription = mlx_whisper.transcribe(audio_path, path_or_hf_repo="mlx-community/whisper-medium.en-mlx-4bit", word_timestamps=True)
-            
-            # Save transcript
-            text_filepath = audio_path.replace('.ogg', '.txt')
-            with open(text_filepath, "w") as f:
-                f.write(transcription['text'])
-            
-            # Generate summary
-            prompt = '''
-                Summarize the meeting transcript in Discord markdown format with these sections:
-                - Project Updates
-                - Discussion Points
-                - Action Items
-                - Next Sprint Assignments
-                
-                Be concise and focus on key points only.
-                
-                Transcript:
-                ''' + transcription['text']
-            
-            messages = [{"role": "user", "content": prompt}]
-            prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
-            
-            response = generate(
-                model,
-                tokenizer,
-                prompt=prompt,
-                verbose=True,
-                max_tokens=8192,
-            )
-            
-            if '<think>' in response and '</think>' in response:
-                response = response.split('</think>', 1)[1].strip()
-            
-            # Remove markdown code block formatting if present
-            # Handles patterns like ```markdown ... ``` or ``` ... ```
-            response = response.strip()
-            if response.startswith('```'):
-                # Find the first newline after the opening ```
-                lines = response.split('\n')
-                # Remove the first line (the opening ```markdown or ```)
-                lines = lines[1:]
-                # Remove the last line if it's just ```
-                if lines and lines[-1].strip() == '```':
-                    lines = lines[:-1]
-                
-                # Strip common leading whitespace if all lines have it
-                if lines:
-                    # Find minimum leading whitespace (excluding empty lines)
-                    min_leading = float('inf')
-                    for line in lines:
-                        if line.strip():  # Non-empty line
-                            leading = len(line) - len(line.lstrip())
-                            if leading < min_leading:
-                                min_leading = leading
-                    
-                    # Strip the common leading whitespace if found
-                    if min_leading != float('inf') and min_leading > 0:
-                        lines = [line[min_leading:] if len(line) >= min_leading else line for line in lines]
-                
-                response = '\n'.join(lines).strip()
-            
-            # Save summary
-            summary_filepath = audio_path.replace('.ogg', '.md')
-            with open(summary_filepath, "w") as f:
-                f.write(response)
-            
-            # Send files to Discord
-            await ctx.send(files=[
-                discord.File(summary_filepath),
-                discord.File(text_filepath)
-                # commented out to avoid hitting file size limit
-                # discord.File(audio_path)
-            ])
-            
+            transcription = threading.Thread(target=transcribe, args=(ctx, audio_path))
+            transcription.start()
+
+            summary_filepath = transcription.join()
+
+            await ctx.send(summary_filepath)
         else:
             await ctx.send("Recording stopped, but no audio was captured.")
             
