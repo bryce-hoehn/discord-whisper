@@ -26,7 +26,7 @@ model, tokenizer = load("lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit")
 
 recordings = {}
 
-def transcribe(ctx, audio_path):
+def transcribe(ctx, audio_path, response):
     transcription = mlx_whisper.transcribe(audio_path, path_or_hf_repo="mlx-community/whisper-tiny.en-mlx-q4")
             
     # Save transcript
@@ -87,8 +87,6 @@ def transcribe(ctx, audio_path):
 
     with open(summary_filepath, "w") as f:
         f.write(response)
-    
-    return response
 
 @bot.event
 async def on_ready():
@@ -116,7 +114,7 @@ async def record(ctx):
 
         sink = voice_recv.FFmpegSink(
             filename=audio_path,
-            options="-acodec libopus -b:a 96k -vbr on"
+            options="-acodec libopus -b:a 128k -ar 48000 -ac 2 -application voip -frame_duration 20 -vbr on"
         )
         
         vc.listen(sink)
@@ -165,15 +163,16 @@ async def stop(ctx):
             await ctx.send(f"🛑 Recording stopped! Duration: {minutes}m {seconds}s, Size: {file_size:.2f} MB")
             await ctx.send(f"Processing file...")
 
-            transcription = threading.Thread(target=transcribe, args=(ctx, audio_path))
-            transcription.start()
-
-            response = transcription.join()
-
-            response = response.split('\n')
+            response = ""
             
-            for r in response:
-                await ctx.send(r)
+            transcription = threading.Thread(target=transcribe, args=(ctx, audio_path, response))
+            transcription.start()
+            transcription.join()
+            
+            if response:
+                response = response.split('\n')
+                for r in response:
+                    await ctx.send(r)
 
         else:
             await ctx.send("Recording stopped, but no audio was captured.")
