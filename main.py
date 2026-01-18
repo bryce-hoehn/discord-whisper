@@ -2,12 +2,15 @@ import discord
 import time
 import os
 import logging
-import mlx_whisper
-import threading
 import asyncio
-from mlx_lm import load, generate
 from discord.ext import commands, voice_recv
 from dotenv import load_dotenv
+
+# Import from our modules
+from audio_sink import PerUserRecordingSink
+from transcription import transcribe_with_timestamps, combine_transcripts
+from summarization import generate_summary
+from audio_processing import combine_audio_files
 
 load_dotenv()
 
@@ -22,71 +25,8 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-model, tokenizer = load("lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit")
-
+# Global state
 recordings = {}
-
-def transcribe(ctx, audio_path, response):
-    transcription = mlx_whisper.transcribe(audio_path, path_or_hf_repo="mlx-community/whisper-tiny.en-mlx-q4")
-            
-    # Save transcript
-    text_filepath = audio_path.replace('.ogg', '.txt')
-    with open(text_filepath, "w") as f:
-        f.write(transcription['text'])
-    
-    # Generate summary
-    prompt = '''
-        Summarize the meeting transcript in Discord markdown format with these sections:
-        - Project Updates
-        - Discussion Points
-        - Action Items
-        - Next Sprint Assignments
-        
-        Be concise and focus on key points only.
-        
-        Transcript:
-        ''' + transcription['text']
-    
-    messages = [{"role": "user", "content": prompt}]
-    prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
-    
-    response = generate(
-        model,
-        tokenizer,
-        prompt=prompt,
-        verbose=True,
-        max_tokens=8192,
-    )
-    
-    if '<think>' in response and '</think>' in response:
-        response = response.split('</think>', 1)[1].strip()
-    
-    # Remove markdown code block formatting if present
-    response = response.strip()
-
-    if response.startswith('```'):
-        lines = response.split('\n')
-        lines = lines[1:]
-        if lines and lines[-1].strip() == '```':
-            lines = lines[:-1]
-        
-        if lines:
-            min_leading = float('inf')
-            for line in lines:
-                if line.strip():
-                    leading = len(line) - len(line.lstrip())
-                    if leading < min_leading:
-                        min_leading = leading
-            
-            if min_leading != float('inf') and min_leading > 0:
-                lines = [line[min_leading:] if len(line) >= min_leading else line for line in lines]
-        
-        response = '\n'.join(lines).strip()
-    
-    summary_filepath = audio_path.replace('.ogg', '.md')
-
-    with open(summary_filepath, "w") as f:
-        f.write(response)
 
 @bot.event
 async def on_ready():
@@ -110,12 +50,10 @@ async def record(ctx):
         # Create recordings directory if it doesn't exist
         os.makedirs("recordings", exist_ok=True)
         
-        audio_path = f"recordings/{timestamp}.ogg"
-
-        sink = voice_recv.FFmpegSink(
-            filename=audio_path,
-            options="-acodec libopus -b:a 128k -ar 48000 -ac 2 -application voip -frame_duration 20 -vbr on"
-        )
+        base_path = f"recordings/{timestamp}"
+        
+        # Create per-user recording sink
+        sink = PerUserRecordingSink(base_path)
         
         vc.listen(sink)
         
@@ -123,7 +61,8 @@ async def record(ctx):
             'voice_client': vc,
             'sink': sink,
             'start_time': time.time(),
-            'audio_path': audio_path
+            'base_path': base_path,
+            'guild': ctx.guild
         }
         
         await ctx.send(f"🎤 Started recording in {ctx.author.voice.channel.name}")
@@ -143,7 +82,9 @@ async def stop(ctx):
         recording_info = recordings[ctx.guild.id]
         vc = recording_info['voice_client']
         start_time = recording_info['start_time']
-        audio_path = recording_info['audio_path']
+        sink = recording_info['sink']
+        base_path = recording_info['base_path']
+        guild = recording_info['guild']
         
         # Stop listening and disconnect
         if vc:
@@ -155,25 +96,71 @@ async def stop(ctx):
         minutes = int(duration // 60)
         seconds = int(duration % 60)
         
+        # Clean up sink and get user files
+        sink.cleanup()
+        user_files = sink.get_user_files()
+        user_info = sink.get_user_info()
+        
         # Clean up
         del recordings[ctx.guild.id]
         
-        if audio_path and os.path.exists(audio_path):
-            file_size = os.path.getsize(audio_path) / (1024 * 1024)  # MB
-            await ctx.send(f"🛑 Recording stopped! Duration: {minutes}m {seconds}s, Size: {file_size:.2f} MB")
-            await ctx.send(f"Processing file...")
-
-            response = ""
+        if user_files:
+            await ctx.send(f"🛑 Recording stopped! Duration: {minutes}m {seconds}s")
+            await ctx.send(f"Processing {len(user_files)} user recordings...")
             
-            transcription = threading.Thread(target=transcribe, args=(ctx, audio_path, response))
-            transcription.start()
-            transcription.join()
+            # Transcribe each user file separately
+            user_transcripts = {}
+            all_full_texts = []
             
-            if response:
-                response = response.split('\n')
-                for r in response:
-                    await ctx.send(r)
-
+            for user_file in user_files:
+                # Extract user_id from filename
+                try:
+                    user_id = int(user_file.split('_user_')[1].replace('.ogg', ''))
+                    user = user_info.get(user_id)
+                    user_name = user.name if user else f"User_{user_id}"
+                    
+                    # Transcribe with timestamps
+                    transcript_lines, full_text = transcribe_with_timestamps(user_file, user_name)
+                    
+                    # Save individual user transcript
+                    user_transcript_path = user_file.replace('.ogg', '.txt')
+                    with open(user_transcript_path, 'w') as f:
+                        f.write('\n'.join(transcript_lines))
+                    
+                    user_transcripts[user_id] = (transcript_lines, full_text, user_name)
+                    all_full_texts.append(full_text)
+                    
+                except Exception as e:
+                    print(f"Error transcribing {user_file}: {e}")
+                    continue
+            
+            # Combine all transcripts chronologically
+            combined_lines = combine_transcripts(user_transcripts)
+            combined_text = ' '.join(all_full_texts)
+            
+            # Save combined transcript
+            combined_transcript_path = f"{base_path}_combined.txt"
+            with open(combined_transcript_path, 'w') as f:
+                f.write('\n'.join(combined_lines))
+            
+            # Generate summary from combined text
+            await ctx.send("Generating summary...")
+            summary = generate_summary(combined_text)
+            
+            # Save summary
+            summary_path = f"{base_path}_summary.md"
+            with open(summary_path, 'w') as f:
+                f.write(summary)
+            
+            # Send summary in chunks
+            summary_lines = summary.split('\n')
+            for line in summary_lines:
+                if line.strip():
+                    await ctx.send(line)
+            
+            # Send completion message
+            await ctx.send(f"✅ Processing complete! Transcripts saved to:\n- Individual: `{base_path}_user_*.txt`\n- Combined: `{combined_transcript_path}`\n- Summary: `{summary_path}`")
+            
         else:
             await ctx.send("Recording stopped, but no audio was captured.")
             
