@@ -63,6 +63,7 @@ def transcribe(ctx, audio_path):
     
     # Remove markdown code block formatting if present
     response = response.strip()
+
     if response.startswith('```'):
         lines = response.split('\n')
         lines = lines[1:]
@@ -87,7 +88,7 @@ def transcribe(ctx, audio_path):
     with open(summary_filepath, "w") as f:
         f.write(response)
     
-    return summary_filepath
+    return response
 
 @bot.event
 async def on_ready():
@@ -167,9 +168,13 @@ async def stop(ctx):
             transcription = threading.Thread(target=transcribe, args=(ctx, audio_path))
             transcription.start()
 
-            summary_filepath = transcription.join()
+            response = transcription.join()
 
-            await ctx.send(summary_filepath)
+            response = response.split('\n')
+            
+            for r in response:
+                await ctx.send(r)
+
         else:
             await ctx.send("Recording stopped, but no audio was captured.")
             
