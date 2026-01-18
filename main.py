@@ -119,7 +119,7 @@ async def record(ctx):
             options="-acodec libopus -b:a 96k -vbr on"
         )
         
-        vc.start_listening(sink)
+        vc.listen(sink)
         
         recordings[ctx.guild.id] = {
             'voice_client': vc,
