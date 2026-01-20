@@ -16,16 +16,23 @@ except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-bot = discord.Bot()
+# Create bot with required intents
+intents = discord.Intents.default()
+intents.voice_states = True
+intents.guilds = True
+intents.message_content = True
+
+bot = discord.Bot(intents=intents)
 
 # Global state
 connections = {}
 
 async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
+    await sink.vc.disconnect()  # Disconnect from the voice channel.
+    
     recorded_users = [  # A list of recorded users
         f"<@{user_id}>" for user_id, audio in sink.audio_data.items()
     ]
-    await sink.vc.disconnect()  # Disconnect from the voice channel.
     files = [
         discord.File(audio.file, f"{user_id}.{sink.encoding}")
         for user_id, audio in sink.audio_data.items()
