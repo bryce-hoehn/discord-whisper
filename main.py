@@ -8,20 +8,25 @@ from summarization import generate_summary
 
 load_dotenv()
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.voice_states = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = discord.Bot()
 
 # Global state
 connections = {}
 
+async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
+    recorded_users = [  # A list of recorded users
+        f"<@{user_id}>"
+        for user_id, audio in sink.audio_data.items()
+    ]
+    await sink.vc.disconnect()  # Disconnect from the voice channel.
+    files = [discord.File(audio.file, f"{user_id}.{sink.encoding}") for user_id, audio in sink.audio_data.items()]  # List down the files.
+    await channel.send(f"finished recording audio for: {', '.join(recorded_users)}.", files=files)
+    
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
 
-@bot.command()
+@bot.slash_command(name="record", description="Start Recording")
 async def record(ctx):
     """Start recording audio from voice channel"""
     try:
@@ -51,17 +56,7 @@ async def record(ctx):
     except Exception as e:
         await ctx.send(f"Error: {str(e)}")
 
-
-async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
-    recorded_users = [  # A list of recorded users
-        f"<@{user_id}>"
-        for user_id, audio in sink.audio_data.items()
-    ]
-    await sink.vc.disconnect()  # Disconnect from the voice channel.
-    files = [discord.File(audio.file, f"{user_id}.{sink.encoding}") for user_id, audio in sink.audio_data.items()]  # List down the files.
-    await channel.send(f"finished recording audio for: {', '.join(recorded_users)}.", files=files)
-
-@bot.command()
+@bot.slash_command(name="stop", description="Stop Recording")
 async def stop_recording(ctx):
     if ctx.guild.id in connections:  # Check if the guild is in the cache.
         vc = connections[ctx.guild.id]
