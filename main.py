@@ -41,14 +41,15 @@ async def on_ready():
 @bot.slash_command(name="record", description="Start Recording")
 async def record(ctx):
     """Start recording audio from voice channel"""
+    await ctx.defer()  # Acknowledge the interaction immediately
     try:
         voice = ctx.author.voice
         if not voice:
-            await ctx.respond("You need to be in a voice channel first!")
+            await ctx.followup.send("You need to be in a voice channel first!")
             return
 
         if ctx.guild.id in connections:
-            await ctx.respond("Already recording in this server!")
+            await ctx.followup.send("Already recording in this server!")
             return
 
         # Connect to voice channel
@@ -59,21 +60,22 @@ async def record(ctx):
         # Start recording with callback
         vc.start_recording(discord.sinks.OGGSink(), once_done, ctx.channel)
 
-        await ctx.respond("Started recording!")
+        await ctx.followup.send("Started recording!")
 
     except Exception as e:
-        await ctx.respond(f"Error: {str(e)}")
+        await ctx.followup.send(f"Error: {str(e)}")
 
 
 @bot.slash_command(name="stop", description="Stop Recording")
 async def stop_recording(ctx):
+    await ctx.defer()  # Acknowledge the interaction immediately
     if ctx.guild.id in connections:
         vc = connections[ctx.guild.id]
         vc.stop_recording()
         del connections[ctx.guild.id]
-        await ctx.delete()
+        await ctx.followup.send("Stopped recording!")
     else:
-        await ctx.respond("I am currently not recording here.")
+        await ctx.followup.send("I am currently not recording here.")
 
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")

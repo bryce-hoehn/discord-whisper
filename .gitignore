@@ -1,4 +1,4 @@
 .env
 .venv
 recordings/
-*.pyc
+__pycache__
