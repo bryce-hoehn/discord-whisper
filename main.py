@@ -34,7 +34,6 @@ async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
         f"finished recording audio for: {', '.join(recorded_users)}.", files=files
     )
 
-
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
@@ -45,11 +44,11 @@ async def record(ctx):
     try:
         voice = ctx.author.voice
         if not voice:
-            await ctx.send("You need to be in a voice channel first!")
+            await ctx.respond("You need to be in a voice channel first!")
             return
 
         if ctx.guild.id in connections:
-            await ctx.send("Already recording in this server!")
+            await ctx.respond("Already recording in this server!")
             return
 
         # Connect to voice channel
@@ -63,7 +62,8 @@ async def record(ctx):
         await ctx.respond("Started recording!")
 
     except Exception as e:
-        await ctx.send(f"Error: {str(e)}")
+        await ctx.respond(f"Error: {str(e)}")
+
 
 @bot.slash_command(name="stop", description="Stop Recording")
 async def stop_recording(ctx):
@@ -73,9 +73,7 @@ async def stop_recording(ctx):
         del connections[ctx.guild.id]
         await ctx.delete()
     else:
-        await ctx.respond(
-            "I am currently not recording here."
-        )
+        await ctx.respond("I am currently not recording here.")
 
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
