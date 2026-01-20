@@ -1,5 +1,4 @@
-discord
-discord-ext-voice_recv
+py-cord[voice]
 mlx-whisper
 mlx-lm
 python-dotenv
