@@ -2,6 +2,7 @@ import discord
 import time
 import os
 import logging
+import asyncio
 from discord.ext import commands
 from dotenv import load_dotenv
 
@@ -78,11 +79,14 @@ async def record(ctx):
 
 
 async def finished_callback(
-    sink: PerUserAudioSink, channel: discord.TextChannel, guild_id: int
+    sink: PerUserAudioSink, channel: discord.TextChannel, *args
 ):
     """Called when recording is finished"""
     try:
-        if guild_id not in connections:
+        # Extract guild_id from args
+        guild_id = args[0] if args else None
+
+        if guild_id is None or guild_id not in connections:
             await channel.send("Error: Recording data not found!")
             return
 
