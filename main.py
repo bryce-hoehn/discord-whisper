@@ -9,14 +9,12 @@ from summarization import generate_summary
 
 load_dotenv()
 
-# Create an event loop for Python 3.14 compatibility
 try:
     asyncio.get_running_loop()
 except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-# Create bot with required intents
 intents = discord.Intents.default()
 intents.voice_states = True
 intents.guilds = True
@@ -34,44 +32,32 @@ async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
 async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
 
-@bot.slash_command(name="record", description="Start Recording")
-async def record(ctx):
-    """Start recording audio from voice channel"""
-    await ctx.defer()  # Acknowledge the interaction immediately
-    try:
-        voice = ctx.author.voice
-        if not voice:
-            await ctx.followup.send("You need to be in a voice channel first!")
-            return
+@bot.command()
+async def record(ctx):  # If you're using commands.Bot, this will also work.
+    voice = ctx.author.voice
 
-        if ctx.guild.id in connections:
-            await ctx.followup.send("Already recording in this server!")
-            return
+    if not voice:
+        await ctx.respond("You aren't in a voice channel!")
 
-        # Connect to voice channel
-        vc = await voice.channel.connect()
+    vc = await voice.channel.connect()  # Connect to the voice channel the author is in.
+    connections.update({ctx.guild.id: vc})  # Updating the cache with the guild and channel.
 
-        connections.update({ctx.guild.id: vc})
+    vc.start_recording(
+        discord.sinks.OGGSink(),  # The sink type to use.
+        once_done,  # What to do once done.
+        ctx.channel  # The channel to disconnect from.
+    )
+    await ctx.respond("Started recording!")
 
-        # Start recording with callback
-        vc.start_recording(discord.sinks.OGGSink(), once_done, ctx.channel)
-
-        await ctx.followup.send("Started recording!")
-
-    except Exception as e:
-        await ctx.followup.send(f"Error: {str(e)}")
-
-
-@bot.slash_command(name="stop", description="Stop Recording")
+@bot.command()
 async def stop_recording(ctx):
-    await ctx.defer()
-    if ctx.guild.id in connections:
+    if ctx.guild.id in connections:  # Check if the guild is in the cache.
         vc = connections[ctx.guild.id]
-        vc.stop_recording()
-        del connections[ctx.guild.id]
-        await ctx.followup.send("Stopped recording!")
+        vc.stop_recording()  # Stop recording, and call the callback (once_done).
+        del connections[ctx.guild.id]  # Remove the guild from the cache.
+        await ctx.delete()  # And delete.
     else:
-        await ctx.followup.send("I am currently not recording here.")
+        await ctx.respond("I am currently not recording here.")  # Respond with this if we aren't recording.
 
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
