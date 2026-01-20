@@ -29,17 +29,6 @@ connections = {}
 
 async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
     await sink.vc.disconnect()  # Disconnect from the voice channel.
-    
-    recorded_users = [  # A list of recorded users
-        f"<@{user_id}>" for user_id, audio in sink.audio_data.items()
-    ]
-    files = [
-        discord.File(audio.file, f"{user_id}.{sink.encoding}")
-        for user_id, audio in sink.audio_data.items()
-    ]  # List down the files.
-    await channel.send(
-        f"finished recording audio for: {', '.join(recorded_users)}.", files=files
-    )
 
 @bot.event
 async def on_ready():
@@ -75,7 +64,7 @@ async def record(ctx):
 
 @bot.slash_command(name="stop", description="Stop Recording")
 async def stop_recording(ctx):
-    await ctx.defer()  # Acknowledge the interaction immediately
+    await ctx.defer()
     if ctx.guild.id in connections:
         vc = connections[ctx.guild.id]
         vc.stop_recording()
