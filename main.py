@@ -38,6 +38,8 @@ async def on_ready():
 @bot.slash_command(name="record")
 async def record(ctx: discord.ApplicationContext):
     """Record your voice!"""
+    await ctx.respond("Recording has started!")
+
     voice = ctx.author.voice
 
     if not voice:
@@ -48,8 +50,6 @@ async def record(ctx: discord.ApplicationContext):
 
     vc.play("obama.mp3")
 
-    await ctx.respond("The recording has started!")
-            
     vc.start_recording(
         discord.sinks.OGGSink,
         finished_callback,
