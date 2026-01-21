@@ -47,14 +47,14 @@ async def record(ctx: discord.ApplicationContext):
     connections.update({ctx.guild.id: vc})
 
     vc.play("obama.mp3")
+
+    await ctx.respond("The recording has started!")
             
     vc.start_recording(
         discord.sinks.OGGSink,
         finished_callback,
         ctx.channel,
     )
-
-    await ctx.respond("The recording has started!")
 
 @bot.slash_command(name="stop")
 async def stop(ctx: discord.ApplicationContext):
