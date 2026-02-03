@@ -1,9 +1,15 @@
 import discord
 import os
+from dotenv import load_dotenv
 from transcription import transcribe_audio
-from summarization import generate_summary
+from summarization import generate_summary, split_summary_by_headings
+
+load_dotenv()
 
 bot = discord.Bot(intents=discord.Intents.all())
+
+opus_path = "/opt/homebrew/opt/opus/lib/libopus.0.dylib"
+discord.opus.load_opus(opus_path)
 
 # Global state
 connections = {}
@@ -32,12 +38,19 @@ async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
             f.write(audio.file.read())
         
         # Pass filepath to transcribe_audio
-        transcript_lines, full_text = transcribe_audio(filepath, user_name)
+        transcript_lines = transcribe_audio(filepath, user_name)
         all_transcripts.extend(transcript_lines)
     
-    summary = generate_summary("**Transcript:**\n" + "\n".join(all_transcripts))
+    all_transcripts.sort()
+
+    transcript = "\n".join(all_transcripts)
+
+    summary = generate_summary("**Transcript:**\n" + transcript)
     
-    await channel.send(summary)
+    # Split summary by headings and send each as separate message
+    summary_messages = split_summary_by_headings(summary)
+    for msg in summary_messages:
+        await channel.send(msg)
 
 @bot.event
 async def on_ready():

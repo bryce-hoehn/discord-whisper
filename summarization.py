@@ -1,42 +1,59 @@
 import os
-from openai import OpenAI
+from mlx_lm import load, generate
 
-summarization_client = OpenAI(
-    base_url=os.getenv("SUMMARIZER_URL"),
-    api_key="not-needed"  # Required by client but not used by model-runner
-)
+def split_summary_by_headings(summary):
+    """Split summary into separate messages by # headings"""
+    messages = []
+    lines = summary.split("\n")
+    
+    current_message = []
+    
+    for line in lines:
+        if line.strip().startswith("#"):
+            # Save previous message if exists
+            if current_message:
+                messages.append("\n".join(current_message).strip())
+            # Start new message with this heading
+            current_message = [line]
+        else:
+            current_message.append(line)
+    
+    # Add the last message
+    if current_message:
+        messages.append("\n".join(current_message).strip())
+    
+    return messages
 
 def generate_summary(transcript_text):
-    """Generate summary from transcript text using Docker Model Runner's summarizer model"""
-    prompt = """
-    Summarize the meeting transcript in Discord markdown format with these sections:
-    - Project Updates
-    - Discussion Points
-    - Action Items
-    - Next Sprint Assignments
-    
-    Be concise and focus on key points only.
-    
-    Transcript:
-    """ + transcript_text
+    """Generate summary from transcript text"""
+    model, tokenizer = load("mlx-community/Qwen3-4B-Instruct-2507-4bit")
 
-    response = summarization_client.chat.completions.create(
-        model=os.getenv("SUMMARIZER_MODEL"),
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that summarizes meeting transcripts."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        max_tokens=262144,
-        temperature=0.3
+    prompt = """
+        Summarize the meeting transcript in Discord markdown format with these sections:
+        - Project Updates
+        - Discussion Points
+        - Action Items
+        - Next Sprint Assignments
+        
+        Be concise and focus on key points only.
+        
+        Transcript:
+    """ + transcript_text
+    
+    messages = [{"role": "user", "content": prompt}]
+
+    prompt = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
     )
 
-    summary = response.choices[0].message.content.strip()
+    summary = generate(
+        model,
+        tokenizer,
+        prompt=prompt,
+        verbose=True,
+        max_tokens=262144)
     
     # Remove markdown code block formatting if present
     if summary.startswith("```"):

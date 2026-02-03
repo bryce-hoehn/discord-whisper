@@ -1,5 +1,5 @@
 import os
-from pywhispercpp.model import Model
+import mlx_whisper
 from datetime import timedelta
 
 def format_timestamp(seconds):
@@ -14,17 +14,14 @@ def transcribe_audio(audio_file, user_name=None):
     """
     Transcribe a single audio file using pywhispercpp.
     """
-    model = Model('base.en')
-    segments = model.transcribe(audio_file)
+    result = mlx_whisper.transcribe(audio_file, path_or_hf_repo="mlx-community/whisper-base.en-mlx-q4")
 
-    # Extract segments with timestamps
     transcript_lines = []
-    full_text = ""
 
-    if segments:
-        for segment in segments:
-            start_time = segment.t0
-            text = segment.text.strip()
+    if result:
+        for segment in result["segments"]:
+            start_time = segment["start"]
+            text = segment["text"].strip()
 
             if text:
                 timestamp = format_timestamp(start_time)
@@ -32,6 +29,5 @@ def transcribe_audio(audio_file, user_name=None):
                     transcript_lines.append(f"{timestamp} {user_name}: {text}")
                 else:
                     transcript_lines.append(f"{timestamp}: {text}")
-                full_text += " " + text
 
-    return transcript_lines, full_text.strip()
+    return transcript_lines
