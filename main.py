@@ -14,7 +14,7 @@ discord.opus.load_opus(opus_path)
 # Global state
 connections = {}
 
-async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
+async def once_done(sink: discord.sinks, channel: discord.TextChannel, arg):
     """
     Callback when recording is complete. Saves each speaker's audio file
     to the recordings folder, then transcribes them separately.
@@ -45,7 +45,7 @@ async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
 
     transcript = "\n".join(all_transcripts)
 
-    summary = generate_summary("**Transcript:**\n" + transcript)
+    summary = generate_summary("**Transcript:**\n" + transcript, arg)
     
     # Split summary by headings and send each as separate message
     summary_messages = split_summary_by_headings(summary)
@@ -57,7 +57,7 @@ async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
 
 @bot.command()
-async def record(ctx):
+async def record(ctx, arg):
     voice = ctx.author.voice
 
     if not voice:
@@ -68,7 +68,7 @@ async def record(ctx):
 
     vc.start_recording(
         discord.sinks.OGGSink(),  # The sink type to use.
-        once_done,  # What to do once done.
+        once_done(arg),  # What to do once done.
         ctx.channel  # The channel to disconnect from.
     )
     await ctx.respond("Started recording!")

@@ -11,9 +11,6 @@ def format_timestamp(seconds):
 
 
 def transcribe_audio(audio_file, user_name=None):
-    """
-    Transcribe a single audio file using pywhispercpp.
-    """
     result = mlx_whisper.transcribe(audio_file, path_or_hf_repo="mlx-community/whisper-base.en-mlx-q4")
 
     transcript_lines = []

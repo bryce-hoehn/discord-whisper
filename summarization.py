@@ -24,11 +24,10 @@ def split_summary_by_headings(summary):
     
     return messages
 
-def generate_summary(transcript_text):
-    """Generate summary from transcript text"""
-    model, tokenizer = load("mlx-community/Qwen3-4B-Instruct-2507-4bit")
+def generate_summary(transcript_text, arg=""):
+    model, tokenizer = load("lmstudio-community/Qwen3-8B-MLX-4bit")
 
-    prompt = """
+    prompt = f"""
         Summarize the meeting transcript in Discord markdown format with these sections:
         - Project Updates
         - Discussion Points
@@ -36,9 +35,13 @@ def generate_summary(transcript_text):
         - Next Sprint Assignments
         
         Be concise and focus on key points only.
-        
+
+        {arg}
+
         Transcript:
-    """ + transcript_text
+
+        {transcript_text}
+    """
     
     messages = [{"role": "user", "content": prompt}]
 
@@ -46,6 +49,7 @@ def generate_summary(transcript_text):
         messages,
         tokenize=False,
         add_generation_prompt=True,
+        enable_thinking=False
     )
 
     summary = generate(
@@ -53,8 +57,8 @@ def generate_summary(transcript_text):
         tokenizer,
         prompt=prompt,
         verbose=True,
-        max_tokens=262144)
-    
+        max_tokens=131072)
+
     # Remove markdown code block formatting if present
     if summary.startswith("```"):
         lines = summary.split("\n")
