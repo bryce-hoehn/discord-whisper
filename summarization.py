@@ -1,29 +1,7 @@
 import os
+import discord
+from discord.ext import pages
 from mlx_lm import load, generate
-
-
-def split_summary_by_headings(summary):
-    """Split summary into separate messages by # headings"""
-    messages = []
-    lines = summary.split("\n")
-
-    current_message = []
-
-    for line in lines:
-        if line.strip().startswith("#"):
-            # Save previous message if exists
-            if current_message:
-                messages.append("\n".join(current_message).strip())
-            # Start new message with this heading
-            current_message = [line]
-        else:
-            current_message.append(line)
-
-    # Add the last message
-    if current_message:
-        messages.append("\n".join(current_message).strip())
-
-    return messages
 
 
 def generate_summary(transcript_text):
@@ -60,3 +38,74 @@ def generate_summary(transcript_text):
         summary = "\n".join(lines).strip()
 
     return summary
+
+
+def create_summary_embed(summary):
+    """Create Discord embed(s) from the summary without truncation.
+    Splits at heading boundaries when possible to keep sections intact.
+    """
+
+    max_length = 4096
+    embed_title = "📝 Meeting Summary"
+    embed_color = discord.Color.blue()
+
+    def is_heading(line):
+        """Check if line is a heading."""
+        stripped = line.strip()
+        return (
+            stripped.startswith("##")
+            or stripped.startswith("###")
+            or (stripped.startswith("**") and stripped.endswith("**"))
+        )
+
+    # Split summary into sections (heading + content)
+    sections = []
+    current_section = []
+    for line in summary.split("\n"):
+        if is_heading(line) and current_section:
+            sections.append("\n".join(current_section))
+            current_section = [line]
+        else:
+            current_section.append(line)
+    if current_section:
+        sections.append("\n".join(current_section))
+
+    # Build chunks from sections
+    chunks = []
+    current_chunk = ""
+
+    for section in sections:
+        # If section is too long for one chunk, split it by line
+        if len(section) > max_length:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+            for line in section.split("\n"):
+                if len(current_chunk) + len(line) + 1 > max_length:
+                    if current_chunk:
+                        chunks.append(current_chunk)
+                    current_chunk = line
+                else:
+                    current_chunk += "\n" + line if current_chunk else line
+        # If section fits in current chunk
+        elif len(current_chunk) + len(section) + 1 <= max_length:
+            current_chunk += "\n" + section if current_chunk else section
+        # Start new chunk with this section
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = section
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    # Create Page objects
+    page_list = []
+    for i, chunk in enumerate(chunks):
+        title = (
+            f"{embed_title} ({i + 1}/{len(chunks)})" if len(chunks) > 1 else embed_title
+        )
+        embed = discord.Embed(title=title, description=chunk, color=embed_color)
+        page_list.append(pages.Page(embeds=[embed]))
+
+    return page_list
