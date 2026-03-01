@@ -1,4 +1,6 @@
 py-cord[voice]
+requests
+openai
 mlx-whisper
 mlx-lm
 python-dotenv
