@@ -115,9 +115,7 @@ async def once_done(sink: discord.sinks, channel: discord.TextChannel, *args):
     with open(md_file, "w") as f:
         f.write(summary)
 
-    await channel.send(
-        "Summary attached!", file=discord.File(md_file, filename="meeting_summary.md")
-    )
+    await channel.send(file=discord.File(md_file, filename="meeting_summary.md"))
 
 
 @bot.event
