@@ -5,7 +5,7 @@ from discord.ext.pages import Paginator, Page
 from datetime import datetime
 from dotenv import load_dotenv
 from transcription import transcribe_audio
-from summarization import generate_summary, create_summary_embed
+from summarization import generate_summary
 
 
 load_dotenv()
